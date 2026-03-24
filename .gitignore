@@ -11,3 +11,5 @@ wheels/
 
 # test folder
 tests
+
+*.env
