@@ -9,9 +9,11 @@ from telegram.ext import (
     filters,
 )
 
-from backend.wingman_edge_agents.agents.chat_agent imprt
-history=""
+from backend.wingman_edge_agents.agents.chat_agent import ChatAgent
+from backend.wingman_edge_agents.agents.web_agent import WebAgent
+history=[]
 turn=0
+agent = "chat_agent"
 
 load_dotenv()
 
@@ -31,18 +33,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Just send any text and I’ll respond with the LLM.")
 
+async def set_agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    global agent
+    agent="web_agent"
+    await update.message.reply_text("Agent set to web_agent")
+
+async def set_chat_agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    global agent
+    agent="chat_agent"
+    await update.message.reply_text("Agent set to chat_agent")
+
+
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Respond with the user message with LLM"""
-    global history,turn
-    llm = UtilAgents(provider='ollama')
+    global history,turn,agent
+    chat_agent = ChatAgent(provider='ollama')
+    web_agent = WebAgent(provider='ollama')
     if not update.message or not update.message.text:
         return
 
     user_text = update.message.text
     try:
         await update.message.chat.send_action("typing")
-        ai_reply = llm.chat_llm_f(user_text, context=history)
-        history += f"User: {user_text}\nAI: {ai_reply}\n"
+        print('The agent is ', agent)
+        if "chat_agent" == agent:
+            ai_reply = await chat_agent.think_chat_llm_af(model=chat_agent.chat_llm,query=user_text, context=history)
+            history.append(f"User: {user_text}")
+            history.append(f"AI: {ai_reply}")
+        elif "web_agent" == agent:
+            ai_reply = await web_agent.web_agent_af(model=web_agent.web_llm,query=user_text, context=history)
+            history.append(f"User: {user_text}")
+            history.append(f"AI: {ai_reply}")
         turn+=1
         print('The history is: ', history,turn)
         await update.message.reply_text(ai_reply)

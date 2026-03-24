@@ -4,7 +4,7 @@ from typing import Annotated, List, Union,Literal,Dict,Any
 
 from pydantic import BaseModel, Field
 
-from langchain_core.messages import SystemMessage,AnyMessage,HumanMessage
+from langchain_core.messages import SystemMessage,AnyMessage,HumanMessage,AIMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.agents import create_agent
@@ -29,7 +29,7 @@ class WebAgent:
         self.web_model = self.web_llm
         super().__init__(**kwargs)
 
-    async def web_llm_af(self, model:str, query:str, context:List[AnyMessage]|str|None=None)->str:
+    async def web_agent_af(self, model:str, query:str, context:List[AnyMessage]|str|None=None)->str:
 
         web_llm = self.llm_client.init_ollama(
             model=model,
@@ -45,12 +45,52 @@ class WebAgent:
             # TODO: add middleware
         )
         # build the context and user query into a prompt
-        # if context:
-        #     for mes in context:
-                
-        response = await web_agent.ainvoke(input=HumanMessage(content=query),context=context)
+        messages = []
+        if context:
+            for msg in context:
+                if msg.split(":")[0] == "User":
+                    messages.append(HumanMessage(content=msg.split(":")[1]))
+                elif msg.split(":")[0] == "AI":
+                    messages.append(AIMessage(content=msg.split(":")[1])) 
+        
+        user_query = """
+        The user query is: {query}
+        """
+        messages.append(HumanMessage(content=user_query.format(query=query)))    
+        response = await web_agent.ainvoke({"messages":messages})
+        return response['messages'][-1].content
 
-        return response
+    def web_agent_f(self, model:str, query:str, context:List[AnyMessage]=[])->str:
+        web_llm = self.llm_client.init_ollama(
+            model=model,
+            temperature=0,
+        )
+        tavily_search = TavilySearch(include_raw_content=False,max_results=5,search_depth="basic")
+        tools = [tavily_search]
+
+        web_agent = create_agent(
+            model=web_llm,
+            tools=tools,
+            system_prompt=WEB_AGENT_SYS_PROMPT,
+            # TODO: add middleware
+        )
+        # build the context and user query into a prompt
+        messages = []
+        if context:
+            for msg in context:
+                if msg.split(":")[0] == "User":
+                    messages.append(HumanMessage(content=msg.split(":")[1]))
+                elif msg.split(":")[0] == "AI":
+                    messages.append(AIMessage(content=msg.split(":")[1])) 
+        
+        user_query = """
+        The user query is: {query}
+        """
+        messages.append(HumanMessage(content=user_query.format(query=query)))    
+        response = web_agent.invoke({"messages":messages})
+        return response['messages'][-1].content
+
+        
 
         
 
