@@ -19,9 +19,9 @@ class ChatAgent:
     chat_llm = os.getenv("CHAT_LLM", "qwen3.5:2b")
 
     def __init__(self, provider: str = "ollama",**kwargs):
-        self.llm_client = LLMClient(provider=provider)
+        self.llm_client = LLMClient()
         self.provider = provider
-        self.chat_model = chat_llm
+        self.chat_model = self.chat_llm
         super().__init__(**kwargs)
 
     def chat_llm_f(self, model:str, query:str, context:str|None=None)->str:
@@ -32,7 +32,7 @@ class ChatAgent:
         )
 
         system_prompt = (
-            CHAT_SYSTEM_PROMPT,
+            CHAT_SYSTEM_PROMPT + "\n"
             "Todays date is {date} and the time is {time}"
         )
 

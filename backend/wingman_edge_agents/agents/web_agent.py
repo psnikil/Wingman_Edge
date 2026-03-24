@@ -4,7 +4,7 @@ from typing import Annotated, List, Union,Literal,Dict,Any
 
 from pydantic import BaseModel, Field
 
-from langchain_core.messages import SystemMessage,AnyMessage
+from langchain_core.messages import SystemMessage,AnyMessage,HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.agents import create_agent
@@ -24,9 +24,9 @@ class WebAgent:
     web_llm = os.getenv("WEB_LLM", "qwen3.5:2b")
 
     def __init__(self, provider: str = "ollama",**kwargs):
-        self.llm_client = LLMClient(provider=provider)
+        self.llm_client = LLMClient()
         self.provider = provider
-        self.web_model = web_llm
+        self.web_model = self.web_llm
         super().__init__(**kwargs)
 
     async def web_llm_af(self, model:str, query:str, context:List[AnyMessage]|str|None=None)->str:
@@ -36,7 +36,7 @@ class WebAgent:
             temperature=0,
         )
         tavily_search = TavilySearch(include_raw_content=False,max_results=5,search_depth="basic")
-        tools = [tavily_search,web_search_duckduckgo]
+        tools = [tavily_search]
 
         web_agent = create_agent(
             model=web_llm,
@@ -45,10 +45,10 @@ class WebAgent:
             # TODO: add middleware
         )
         # build the context and user query into a prompt
-        if context:
-            for mes in context:
-                if 
-        response = await web_agent.ainvoke(input=query,context=context)
+        # if context:
+        #     for mes in context:
+                
+        response = await web_agent.ainvoke(input=HumanMessage(content=query),context=context)
 
         return response
 

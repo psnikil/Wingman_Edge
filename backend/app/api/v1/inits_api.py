@@ -2,9 +2,6 @@ from fastapi import APIRouter, HTTPException
 from backend.app.schemas.misc import IsInit
 from backend.app.domain.services import IsInitService
 from backend.wingman_edge_agents.utils.ollama_client import is_ollama_running, start_ollama, list_ollama_models
-from sqlalchemy import create_engine, inspect
-from sqlalchemy.orm import sessionmaker
-from app.infrastructure.database.db_models import Base
 
 router = APIRouter()
 is_init_service = IsInitService()

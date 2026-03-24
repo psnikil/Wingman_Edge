@@ -1,9 +1,9 @@
-# from .models import IsInit
-# from fastapi import Depends
+from backend.app.schemas.misc import IsInit
+from fastapi import Depends
 # from app.schemas.chat import Chat, Message, Prompt
-# from app.infrastructure.ollama.ollama_client import is_ollama_running, start_ollama, list_ollama_models,generate_llm_response
-# import uuid
-# from datetime import datetime
+from backend.wingman_edge_agents.utils.ollama_client import is_ollama_running, start_ollama, list_ollama_models
+import uuid
+from datetime import datetime
 # from sqlalchemy import create_engine
 # from sqlalchemy.orm import sessionmaker, Session
 # from app.infrastructure.database.db_models import Chat_db, Base,Message_db
@@ -235,33 +235,33 @@
 
 
     
-# class IsInitService:
-#     def __init__(self):
-#         # Start with isInit set to False
-#         self.is_init = False
+class IsInitService:
+    def __init__(self):
+        # Start with isInit set to False
+        self.is_init = False
 
-#     def update_init(self, status: bool):
-#         self.is_init = status
-#         return IsInit(is_init=self.is_init)
-
-
-#     def check_init(self):
-
-#         if not is_ollama_running():
-#             try:
-#                 start_ollama()
-#                 self.update_init(self, status=True)
-#                 return self.is_init
-#             except Exception as e:
-#                 print(f"❌ Error starting Ollama: {e}")
-#                 self.update_init(self, status=False)
-#                 return e
+    def update_init(self, status: bool):
+        self.is_init = status
+        return IsInit(is_init=self.is_init)
 
 
-#         else:
-#             list_ollama_models()
+    def check_init(self):
 
-#         return IsInit(is_init=self.is_init)
+        if not is_ollama_running():
+            try:
+                start_ollama()
+                self.update_init(status=True)
+                return self.is_init
+            except Exception as e:
+                print(f"❌ Error starting Ollama: {e}")
+                self.update_init(status=False)
+                return e
+
+
+        else:
+            list_ollama_models()
+
+        return IsInit(is_init=self.is_init)
     
 
 

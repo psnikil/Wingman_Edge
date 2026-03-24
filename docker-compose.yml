@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wingman
+      POSTGRES_PASSWORD: wingmanpass
+      POSTGRES_DB: wingman
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./database/initdb:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+
+  backend:
+    build:
+      context: ./
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgres://wingman:wingmanpass@db:5432/wingman
+      TELEGRAM_TOKEN: "" # set your telegram token here or use .env
+      OLLAMA_HOST: "http://host.docker.internal:11434" # adjust if using local Ollama
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+
+volumes:
+  db_data:

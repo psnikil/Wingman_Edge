@@ -26,7 +26,7 @@ class CreateChatRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     chatId: str
-    prompt: str
+    query: str
     model: str = ''  # Optional, can be used to specify which LLM to use
     
 

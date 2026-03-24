@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException,Depends
-from backend.wingman_edge_agents.services.edge_llm_client.ollama_client import list_ollama_models,is_ollama_running
+from backend.wingman_edge_agents.utils.ollama_client import list_ollama_models,is_ollama_running
 
 router = APIRouter()
 

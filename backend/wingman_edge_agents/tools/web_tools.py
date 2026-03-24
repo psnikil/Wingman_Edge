@@ -1,4 +1,4 @@
-from tools.data_models import DDGSearchArgs
+from backend.wingman_edge_agents.tools.data_models import DDGSearchArgs
 import os
 from typing import Optional, List
 from langchain.tools import tool

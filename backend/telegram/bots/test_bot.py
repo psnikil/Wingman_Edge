@@ -9,7 +9,7 @@ from telegram.ext import (
     filters,
 )
 
-from agents.util_agents import UtilAgents
+from backend.wingman_edge_agents.agents.chat_agent imprt
 history=""
 turn=0
 
