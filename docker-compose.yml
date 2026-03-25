@@ -16,8 +16,8 @@ services:
 
   backend:
     build:
-      context: ./
-      dockerfile: backend/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
       - db
@@ -28,7 +28,9 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app
+      - .:/app
+      - /app/.venv # Keep container's .venv from being overwritten by host mapping
+
 
 volumes:
   db_data:
