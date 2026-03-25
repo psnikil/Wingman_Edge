@@ -9,8 +9,8 @@ from telegram.ext import (
     filters,
 )
 
-from backend.wingman_edge_agents.agents.chat_agent import ChatAgent
-from backend.wingman_edge_agents.agents.web_agent import WebAgent
+import httpx
+
 history=[]
 turn=0
 agent = "chat_agent"
@@ -19,13 +19,20 @@ load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_BOT_CHAT_ID = os.getenv("TELEGRAM_BOT_CHAT_ID")
+URL="http://localhost:8000"
+CHAT_LLM = os.getenv("CHAT_LLM")
+
+
+client = httpx.AsyncClient()
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
     user = update.effective_user
+    response = await client.get(f"{URL}/is_init")
+
     await update.message.reply_html(
-        rf"Hi {user.mention_html()}! Send me a message and I’ll answer with an LLM.",
+        rf"Hi {user.mention_html()}! Send me a message and I’ll answer with an LLM. the response for init is {response.json()}",
         reply_markup=ForceReply(selective=True),
     )
 
@@ -47,23 +54,30 @@ async def set_chat_agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Respond with the user message with LLM"""
     global history,turn,agent
-    chat_agent = ChatAgent(provider='ollama')
-    web_agent = WebAgent(provider='ollama')
     if not update.message or not update.message.text:
         return
 
     user_text = update.message.text
+    payload ={
+        "model":CHAT_LLM,
+        "query":user_text,
+        "chatId":"1",
+    }
     try:
         await update.message.chat.send_action("typing")
         print('The agent is ', agent)
         if "chat_agent" == agent:
-            ai_reply = await chat_agent.think_chat_llm_af(model=chat_agent.chat_llm,query=user_text, context=history)
-            history.append(f"User: {user_text}")
-            history.append(f"AI: {ai_reply}")
+            # using REST API
+            response = await client.post(f"{URL}/chat", json=payload)
+            print("The response is: ", response)
+            ai_reply = response.json()
         elif "web_agent" == agent:
-            ai_reply = await web_agent.web_agent_af(model=web_agent.web_llm,query=user_text, context=history)
-            history.append(f"User: {user_text}")
-            history.append(f"AI: {ai_reply}")
+            # using REST API
+            response = await client.post(f"{URL}/web_chat", json=payload)
+            print("The response is: ", response)
+            ai_reply = response.json()
+        history.append(f"User: {user_text}")
+        history.append(f"AI: {ai_reply}")
         turn+=1
         print('The history is: ', history,turn)
         await update.message.reply_text(ai_reply)

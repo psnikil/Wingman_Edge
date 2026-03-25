@@ -7,7 +7,7 @@ router = APIRouter()
 is_init_service = IsInitService()
 
 @router.get("/is_init")
-def is_initiated():
+async def is_initiated():
     try:
         if not is_ollama_running():
             start_ollama()

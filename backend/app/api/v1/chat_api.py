@@ -8,18 +8,20 @@ from backend.app.schemas.chat import ChatRequest
 
 
 router = APIRouter()
+# TODO: maybe init the llm here and pass it through the agent object
 
 
 @router.post("/chat")
-def chat(request:ChatRequest):
+async def chat(request:ChatRequest):
     """ Basic endpoint to handle chat requests. This will be the main endpoint for the frontend to interact with the LLM. """
+    print('the request is: ', request)
     try:
         if not is_ollama_running():
             raise 'Ollama not started'
         
         chat_agent = ChatAgent()
 
-        chat_response = chat_agent.chat_llm_f(model=request.model,query=request.query)
+        chat_response = await chat_agent.think_chat_llm_af(model=request.model,query=request.query)
 
         return chat_response
 
@@ -36,7 +38,7 @@ async def web_agent(request:ChatRequest):
         
         web_agent = WebAgent()
 
-        web_response = await web_agent.web_llm_af(model=request.model,query=request.query)
+        web_response = await web_agent.web_agent_af(model=request.model,query=request.query)
 
         return web_response
 
