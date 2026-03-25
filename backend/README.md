@@ -30,19 +30,19 @@ Planned/coming soon:
 
 ```
 backend/
-├── Dockerfile                  # Backend container image (optional)
 ├── app/
 │   ├── main.py                 # FastAPI entrypoint
 │   ├── api/                    # HTTP API routers (v1)
-│   ├── domain/                 # Business logic (some parts are stubs)
+│   ├── domain/                 # Business logic
 │   └── schemas/                # Pydantic models for API
 ├── wingman_edge_agents/        # Agents, prompts, LLM client wrappers
-├── telegram/                   # Example Telegram bot integration (demo)
-├── database/                   # DB bootstrap/init (placeholders)
+├── database/                   # DB bootstrap/init (Placeholders)
 └── README.md                   # This file
 ```
 
 ## Setup & Installation
+
+The project uses `uv` for dependency management and execution.
 
 ### 1. Clone the repository
 ```sh
@@ -50,65 +50,52 @@ git clone <repo-url>
 cd Wingman_Edge
 ```
 
-### 2. Create and activate a virtual environment
-```sh
-python -m venv .venv
-# On macOS/Linux:
-source .venv/bin/activate
-# On Windows:
-.venv\Scripts\activate
-```
-
-### 3. Install dependencies
-
-There is no single, canonical `requirements.txt` in the repo root. You can install the common dependencies used in the project with:
+### 2. Install dependencies (using uv)
 
 ```bash
-python -m pip install --upgrade pip
-pip install fastapi uvicorn langchain langchain-ollama langchain-core sqlalchemy psycopg2-binary python-telegram-bot ollama httpx pydantic pydantic-settings
+uv sync
 ```
 
-Alternatively create a `requirements.txt` or use `pyproject.toml` and your preferred installer.
-
-### 4. Start Ollama (local model runtime)
+### 3. Start Ollama (local model runtime)
 
 Install Ollama following the instructions at https://ollama.com/ and pull a model:
 
 ```bash
-ollama pull llama3
+ollama pull qwen3.5:2b
 ollama serve
 ```
 
 Ollama typically listens at `http://localhost:11434`.
 
-### 5. Run the backend server (development)
+### 4. Run the backend server (development)
+
+From the project root:
 
 ```bash
-cd backend
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uv run python -m backend.main
 ```
 
 The API will be available at `http://localhost:8000`.
 
 ## Database & Persistence
 
-- The repository contains placeholders for database initialization and models, but the running code does not persist chats to Postgres today.
-- A `docker-compose.yml` is present at the project root and can be used as a starting point to spin up Postgres; however the `database/initdb/` folder currently does not include active SQL for initializing `pgvector` or tables.
+> [!NOTE]
+> **TODO: Database Implementation**
+> - Implement SQLAlchemy models in `backend/database`.
+> - Add CRUD helpers for chat history and agent state.
+> - Configure `DATABASE_URL` and initialize the connection in the FastAPI app.
+> - Add Alembic for database migrations.
 
-When you are ready to enable DB persistence, recommended steps:
-
-- Add SQLAlchemy models and CRUD helpers.
-- Add a small `init.sql` to `database/initdb/` to enable `pgvector` and create tables.
-- Configure `DATABASE_URL` in `.env` and wire the connection in `app/main.py` or domain services.
+- The repository contains placeholders for database initialization and models, but the running code does not persist data to Postgres today.
+- A `docker-compose.yml` is present at the project root and can be used to spin up a Postgres instance with `pgvector` support.
 
 ## Key Dependencies
 
+- **uv**: Dependency management and execution
 - **FastAPI**: Web API framework
-- **Uvicorn**: ASGI server
-- **LangChain / langchain-ollama / langchain-core**: Agent & prompt building and Ollama integration
-- **Ollama**: Local model runtime (recommended to install locally)
-- **SQLAlchemy**: Planned ORM for DB persistence (not yet wired)
-- **python-telegram-bot**: Example Telegram integration
+- **LangChain / langchain-ollama / langchain-core**: Agent & prompt building
+- **Ollama**: Local model runtime
+- **SQLAlchemy**: Planned ORM for DB persistence
 
 ## Ollama LLM Integration
 

@@ -20,6 +20,7 @@ Wingman is a lightweight, local agent backend designed to run on edge devices (f
 ```
 Wingman_Edge/
 ├── backend/    # FastAPI backend, API routes, services, and agent code
+├── telegram/   # Telegram bot implementation and entrypoint
 ├── database/   # DB initialization scripts for docker-compose (Postgres + pgvector)
 ├── wingman_edge_agents/ # Agents, prompts, tools
 ├── README.md   # This file (global docs)
@@ -34,40 +35,40 @@ See subfolders for implementation details; parts of the codebase are still in-pr
 ### 1. Prerequisites
 
 - **Python 3.13+** (project `pyproject.toml` requires >=3.13)
+- **uv** (recommended for dependency management: https://docs.astral.sh/uv/)
 - **Ollama** installed and running locally if you want to use local LLMs (https://ollama.com/)
 
 Note: this project targets small, local setups such as Raspberry Pi. Ensure your Pi has sufficient disk, RAM and the proper Ollama/LLM runtime (or use a remote Ollama endpoint).
 
-### 2. Run backend locally (without Docker)
+### 2. Run backend locally (using uv)
 
 ```bash
-cd backend
-# Create a virtualenv and activate it (example):
-python -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies (there is a `backend/requirements.txt` included for Docker and dev use):
-pip install -r requirements.txt
-
-# Run the FastAPI server (development):
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# Run the FastAPI server:
+uv run python -m backend.main
 # API available at: http://localhost:8000
+```
+
+### 3. Run Telegram bot locally (using uv)
+
+```bash
+# Run the telegram bot entrypoint:
+uv run python telegram/main.py
 ```
 
 ---
 
 ## Docker (recommended for quick setup & DB init)
 
-This repository includes a `backend/Dockerfile` and a `docker-compose.yml` at the project root. `docker-compose` launches:
+This repository includes a `Dockerfile` and a `docker-compose.yml` at the project root. `docker-compose` launches:
 - `db` (Postgres) with an init SQL that enables `pgvector` and creates a minimal table to hold embeddings.
-- `backend` (FastAPI) built from `backend/Dockerfile`.
+- `backend` (FastAPI + Ollama) built from `Dockerfile`.
 
 Environment values are configurable via an `.env` file or by overriding environment variables in the compose command.
 
 Example `docker-compose` usage:
 
 ```bash
-# Build and start postgres + backend (creates DB and pgvector extension during initialization):
+# Build and start postgres + backend:
 docker compose up --build
 
 # Stop and remove containers (preserves DB volume):
@@ -76,7 +77,8 @@ docker compose down
 
 Ports:
 - Backend: `8000` -> container `8000`
-- Postgres: `5432` -> container `5432` (optional to expose)
+- Postgres: `5432` -> container `5432`
+- Ollama: `11434` -> container `11434`
 
 ---
 
@@ -85,13 +87,19 @@ Ports:
 - **Chat endpoint**: `POST /api/v1/chat` — conversational chat powered by LangChain + Ollama (see `backend/app/api/v1/chat_api.py`).
 - **Web agent endpoint**: `POST /api/v1/web` — fetches web content and summarizes (see `backend/wingman_edge_agents/agents/web_agent.py`).
 
-These endpoints are intentionally separated to keep agent responsibilities clear. The project includes a Telegram bot (`database/telegram/bots/test_bot.py`) that demonstrates a simple integration.
+These endpoints are intentionally separated to keep agent responsibilities clear. The project includes a Telegram bot (`telegram/main.py`) that demonstrates a simple integration.
 
 ---
 
 ## Database & Vector Store (planned / upcoming)
 
-- The DB integration (Postgres + pgvector) is planned but not fully wired into the code yet. The `docker-compose.yml` and `database/initdb/init.sql` provided will initialize a Postgres DB with the `vector` extension and a simple placeholder table. When you are ready to enable persistence, the backend will be extended to connect to the Postgres instance and store/retrieve embeddings.
+> [!NOTE]
+> **TODO: Database Integration**
+> - Implement database models and interaction logic in `backend/database`.
+> - Wire DB connection into the FastAPI app.
+> - Add migrations using Alembic.
+
+- The DB integration (Postgres + pgvector) is planned but not fully wired into the code yet. The `docker-compose.yml` and `database/initdb/` provided will initialize a Postgres DB with the `vector` extension. When you are ready to enable persistence, the backend will be extended to connect to the Postgres instance and store/retrieve embeddings.
 
 ---
 
@@ -100,9 +108,10 @@ These endpoints are intentionally separated to keep agent responsibilities clear
 - **FastAPI**: HTTP API server
 - **LangChain**: agent orchestration
 - **Ollama**: local model inference
+- **uv**: Dependency management and execution
 - **SQLAlchemy**: planned DB ORM
 - **Postgres + pgvector**: planned vector DB (docker-compose init included)
-- **python-telegram-bot**: Telegram integration (example bot present)
+- **python-telegram-bot**: Telegram integration
 
 ---
 
