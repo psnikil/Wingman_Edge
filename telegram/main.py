@@ -8,7 +8,7 @@ from telegram.ext import (
     filters,
 )
 
-from bots.test_bot import start,help_command,echo,set_agent,set_chat_agent
+from bots.test_bot import start, help_command, echo, set_web_agent, set_chat_agent, llm_list, change_llm, agent_list
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -22,7 +22,10 @@ if __name__ == "__main__":
     # on different commands - answer in Telegram
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("set_agent", set_agent))
+    application.add_handler(CommandHandler("llm_list", llm_list))
+    application.add_handler(CommandHandler("change_llm", change_llm))
+    application.add_handler(CommandHandler("agent_list", agent_list))
+    application.add_handler(CommandHandler("set_web", set_web_agent))
     application.add_handler(CommandHandler("set_chat", set_chat_agent))
 
     # on non command i.e message - echo the message on Telegram
