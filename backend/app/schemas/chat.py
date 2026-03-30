@@ -1,6 +1,6 @@
 """ TODO NEED TO CONVERT THESE BASEMODELS TO MATCH THE DB CLASSES """
 
-from pydantic import BaseModel
+from pydantic import BaseModel,Field
 from datetime import datetime
 from typing import List
 
@@ -8,7 +8,7 @@ class Message(BaseModel):
     messageId: str = ""
     content: str
     role: str  # 'user' or 'assistant'
-    timestamp: datetime
+    timestamp: datetime = Field(default_factory=datetime.now)
     llm:str
     
 
@@ -17,8 +17,6 @@ class Chat(BaseModel):
     chatName: str
     chatSummary:str
     messages: List[Message]
-    createdAt: datetime
-    updatedAt: datetime
 
 class CreateChatRequest(BaseModel):
     userPrompt: str = ""

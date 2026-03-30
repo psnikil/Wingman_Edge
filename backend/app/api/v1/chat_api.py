@@ -1,15 +1,16 @@
 from fastapi import APIRouter, HTTPException,Depends
 
-from backend.wingman_edge_agents.services.edge_llm_client.llm_client import LLMClient
+
 from backend.wingman_edge_agents.utils.ollama_client import is_ollama_running,list_ollama_models
-from backend.wingman_edge_agents.agents.chat_agent import ChatAgent
-from backend.wingman_edge_agents.agents.web_agent import WebAgent
+from backend.app.infra.agents import agents_infra
+
 from backend.app.schemas.chat import ChatRequest
 
 
 router = APIRouter()
 # TODO: maybe init the llm here and pass it through the agent object
 
+agents_infra = agents_infra()
 
 @router.post("/chat")
 async def chat(request:ChatRequest):
@@ -19,9 +20,7 @@ async def chat(request:ChatRequest):
         if not is_ollama_running():
             raise 'Ollama not started'
         
-        chat_agent = ChatAgent()
-
-        chat_response = await chat_agent.think_chat_llm_af(model=request.model,query=request.query)
+        chat_response = agents_infra.think_chat_agent(chat_id=request.chatId,model=request.model,query=request.query)
 
         return chat_response
 
@@ -36,9 +35,7 @@ async def web_agent(request:ChatRequest):
         if not is_ollama_running():
             raise 'Ollama not started'
         
-        web_agent = WebAgent()
-
-        web_response = await web_agent.web_agent_af(model=request.model,query=request.query)
+        web_response = agents_infra.web_agent(chat_id=request.chatId,model=request.model,query=request.query)
 
         return web_response
 
