@@ -8,10 +8,12 @@ import re
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
-
+from dotenv import load_dotenv
 import pymupdf4llm
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
+
+load_dotenv()
 
 _RAW_TEXT_SUFFIXES = {".txt", ".text", ".log", ".env", ".csv"}
 _MARKDOWN_SUFFIXES = {".md", ".markdown", ".mdx"}
@@ -54,6 +56,7 @@ def read_raw_text_bytes(path: Path) -> str:
 
 
 def html_string_to_markdown(html: str) -> str:
+    print("html:", len(html))
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
@@ -207,6 +210,9 @@ def extract_url_with_playwright(url: str) -> str:
             page.goto(url, wait_until="domcontentloaded", timeout=60_000)
 
             clipped = ""
+            print('note:', note)
+            print('ext:', ext)
+            print('hotkeys:', hotkeys)
             if ext and hotkeys and note == "":
                 for combo in hotkeys:
                     try:
@@ -223,11 +229,12 @@ def extract_url_with_playwright(url: str) -> str:
                     except Exception:
                         continue
 
-            if isinstance(clipped, str) and clipped.strip():
-                body = note + clipped.strip()
-            else:
-                body = note + html_string_to_markdown(page.content())
-
+            # if isinstance(clipped, str) and clipped.strip():
+            #     print("clipped:", clipped)
+            #     body = note + clipped.strip()
+            # else:
+            body = note + html_string_to_markdown(page.content())
+            print("page",body)
             context.close()
             context = None
             if browser is not None:

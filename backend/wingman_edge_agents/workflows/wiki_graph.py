@@ -1,7 +1,7 @@
 from langgraph.graph import END, START, StateGraph
 
 from backend.wingman_edge_agents.graph.data_models import WikiState
-from backend.wingman_edge_agents.graph.wiki_nodes import ingest_fetch
+from backend.wingman_edge_agents.graph.wiki_nodes import ingest_compile, ingest_fetch
 from backend.wingman_edge_agents.graph.wiki_router import query_router
 
 
@@ -18,6 +18,7 @@ def build_wiki_graph():
     graph = StateGraph(WikiState)
     graph.add_node("query_router", query_router)
     graph.add_node("ingest_fetch", ingest_fetch)
+    graph.add_node("ingest_compile", ingest_compile)
     graph.add_edge(START, "query_router")
     graph.add_conditional_edges(
         "query_router",
@@ -28,5 +29,6 @@ def build_wiki_graph():
             "lint": END,
         },
     )
-    graph.add_edge("ingest_fetch", END)
+    graph.add_edge("ingest_fetch", "ingest_compile")
+    graph.add_edge("ingest_compile", END)
     return graph.compile()

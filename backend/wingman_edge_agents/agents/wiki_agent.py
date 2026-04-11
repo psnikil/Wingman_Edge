@@ -1,15 +1,17 @@
 import os
-import re
+import json
+from pathlib import Path
 from typing import Any, Dict, Literal, Union
-
+from datetime import date
 from dotenv import load_dotenv
 from langchain.agents import create_agent
 from langchain.agents.middleware import ModelRetryMiddleware, ToolRetryMiddleware
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from backend.wingman_edge_agents.agents.prompts.wiki_pompt import (
+    QUERY_ROUTER_SYS_PROMPT,
     TOPIC_AGENT_SYS_PROMPT,
-    TOPIC_PLACEMENT_STRUCTURE_PROMPT,
+    WIKI_COMPILE_AGENT_SYS_PROMPT,
 )
 from backend.wingman_edge_agents.services.edge_llm_client.llm_client import LLMClient
 from backend.wingman_edge_agents.tools.vault_raw_tools import (
@@ -17,12 +19,31 @@ from backend.wingman_edge_agents.tools.vault_raw_tools import (
     list_raw_topic_directories,
     read_head_of_raw_topic_note,
 )
+from backend.wingman_edge_agents.tools.vault_wiki_tools import (
+    append_wiki_log_entry,
+    list_wiki_articles,
+    read_wiki_file,
+    write_wiki_article,
+    write_wiki_index,
+)
 from backend.wingman_edge_agents.graph.data_models import QueryRouterOutput, TopicPlacementDecision
-from backend.wingman_edge_agents.utils.ingest_save import slugify_kebab_segment
-from backend.wingman_edge_agents.agents.prompts.wiki_pompt import QUERY_ROUTER_SYS_PROMPT
 from langchain_core.prompts import ChatPromptTemplate
 
 load_dotenv()
+
+_WIKI_COMPILE_BODY_MAX = int(os.getenv("WIKI_COMPILE_BODY_MAX_CHARS", "80000"))
+
+
+def _parse_agent_json_final(text: str) -> dict[str, Any]:
+    s = (text or "").strip()
+    if s.startswith("```"):
+        lines = s.split("\n")
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        s = "\n".join(lines).strip()
+    return json.loads(s)
 
 
 def _format_agent_messages(messages: list[BaseMessage]) -> str:
@@ -91,6 +112,18 @@ class RouterAgents:
 
         return route
 
+
+class NodeAgent:
+
+    def __init__(self, provider: Literal["ollama", "openai", "anthropic"] = "ollama"):
+        self.provider = provider
+        self.llm_client = LLMClient()
+        self.topic_agent_llm = os.getenv("WIKI_INGEST_MODEL", "llama3.1:8b")
+        self.wiki_agent_llm = os.getenv(
+            "WIKI_WIKI_AGENT_LLM",
+            os.getenv("WIKI_INGEST_MODEL", "llama3.1:8b"),
+        )
+        
     def topic_agent(self, excerpt: str, source_description: str) -> TopicPlacementDecision:
         """
         LangChain agent: inspect vault raw/ topics via tools, then structured placement.
@@ -119,37 +152,106 @@ class RouterAgents:
             f"Source: {source_description}\n\n"
             "Document excerpt (may be truncated for classification):\n---\n"
             f"{excerpt}\n---\n"
-            "Use tools to list existing raw topic directories, then decide reuse vs new topic."
+            "Use tools to list existing raw topic directories, then decide reuse vs new topic, create a new short kebab-case file name for the new note."
+            "Extract the published date from the excerpt if it is present."
+            "Return the data in the following JSON format:"
+            "{\n\t \"topic_directory\": \"string\",\n\t \"note_title\": \"string\",\n\t \"published_date\": \"string | null\"\n}"
         )
         result = agent.invoke({"messages": [("user", user_block)]})
         messages = result.get("messages", [])
         transcript = _format_agent_messages(messages)
-        parser_llm = self.llm_client.init_ollama(
-            model=self.topic_agent_llm,
-            temperature=0,
-            reasoning=None,
-        )
-        structured = parser_llm.with_structured_output(TopicPlacementDecision)
-        parse_prompt = (
-            TOPIC_PLACEMENT_STRUCTURE_PROMPT
-            + "\n\n## Assistant transcript\n"
-            + transcript
-            + "\n\n## Excerpt (for published date hints)\n"
-            + excerpt[:4000]
-        )
-        decision = structured.invoke([HumanMessage(content=parse_prompt)])
-        if not isinstance(decision, TopicPlacementDecision):
-            raise TypeError(f"Expected TopicPlacementDecision, got {type(decision)}")
-        topic = slugify_kebab_segment(decision.topic_directory, max_len=80)
-        title = decision.note_title.strip() or "Untitled"
-        pub = (decision.published_date or "").strip() or None
-        if pub and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", pub):
-            pub = None
-        return TopicPlacementDecision(
+        final_ans = messages[-1].content
+        res_json = json.loads(final_ans)
+        topic = res_json.get("topic_directory")
+        title = res_json.get("note_title")
+        pub = res_json.get("published_date")
+        
+        res = TopicPlacementDecision(
             topic_directory=topic or "misc",
-            note_title=title,
+            note_title=title or "Untitled",
             published_date=pub,
         )
+        return res
+
+    def wiki_agent(
+        self,
+        *,
+        ingest_markdown: str,
+        vault_relative_raw_md: str,
+        source_description: str,
+        collected: str,
+        published_display: str,
+        note_title: str,
+    ) -> str:
+        """Compile ingest into ``wiki/`` via tools; return JSON summary string."""
+        raw_path = Path(vault_relative_raw_md.replace("\\", "/"))
+        raw_wikilink_path = raw_path.with_suffix("").as_posix()
+
+        body = ingest_markdown
+        truncated = False
+        if len(body) > _WIKI_COMPILE_BODY_MAX:
+            body = body[:_WIKI_COMPILE_BODY_MAX]
+            truncated = True
+
+        llm = self.llm_client.init_ollama(
+            model=self.wiki_agent_llm,
+            temperature=0,
+            reasoning=None,
+            num_ctx=80000,
+        )
+        tools = [
+            list_wiki_articles,
+            read_wiki_file,
+            write_wiki_article,
+            write_wiki_index,
+            append_wiki_log_entry,
+        ]
+        agent = create_agent(
+            model=llm,
+            system_prompt=WIKI_COMPILE_AGENT_SYS_PROMPT,
+            tools=tools,
+            middleware=[
+                ToolRetryMiddleware(max_retries=2, backoff_factor=1.5, initial_delay=0.5),
+                ModelRetryMiddleware(max_retries=2),
+            ],
+        )
+        today = date.today().isoformat()
+        trunc_note = (
+            f"\n\n[Ingest body truncated to {_WIKI_COMPILE_BODY_MAX} characters for this step. "
+            "Rely on metadata and the start of the body; Raw wikilink must still match the path below.]\n"
+            if truncated
+            else ""
+        )
+        user_block = (
+            f"Today's date (for log/index): {today}\n"
+            f"Note title (from ingest): {note_title}\n"
+            f"Source: {source_description}\n"
+            f"Collected: {collected}\n"
+            f"Published (display): {published_display}\n"
+            f"Vault-relative raw file (disk path): {vault_relative_raw_md}\n"
+            f"Use this path for Raw wikilinks (no .md in link): [[{raw_wikilink_path}]]\n\n"
+            "Full ingest markdown (saved under raw/):\n---\n"
+            f"{body}\n---{trunc_note}\n"
+            "Follow the system instructions: explore wiki, write/update articles with Obsidian wikilinks and YAML tags, "
+            "rewrite index.md, append log.md, then reply with ONLY the final JSON object."
+        )
+        result = agent.invoke({"messages": [("user", user_block)]})
+        messages = result.get("messages", [])
+        final_ans = messages[-1].content
+        if isinstance(final_ans, list):
+            final_ans = " ".join(str(x) for x in final_ans)
+        try:
+            summary = _parse_agent_json_final(str(final_ans))
+            return json.dumps(summary)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            transcript = _format_agent_messages(messages)
+            return json.dumps(
+                {
+                    "error": "wiki_agent_final_not_json",
+                    "raw_final": str(final_ans)[:2000],
+                    "transcript_tail": transcript[-8000:],
+                }
+            )
 
 
 def topic_agent(
@@ -157,5 +259,5 @@ def topic_agent(
     source_description: str,
     provider: Literal["ollama", "openai", "anthropic"] = "ollama",
 ) -> TopicPlacementDecision:
-    """Run the topic-placement LangChain agent (wrapper around :meth:`RouterAgents.topic_agent`)."""
-    return RouterAgents(provider).topic_agent(excerpt, source_description)
+    """Run the topic-placement LangChain agent (wrapper around :meth:`NodeAgent.topic_agent`)."""
+    return NodeAgent(provider).topic_agent(excerpt, source_description)

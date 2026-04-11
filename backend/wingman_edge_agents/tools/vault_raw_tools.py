@@ -1,19 +1,23 @@
 """Safe read-only tools for exploring OBSIDIAN_VAULT_PATH/raw topic folders."""
 
-import os
 import re
 from pathlib import Path
 
 from langchain.tools import tool
 
+from backend.wingman_edge_agents.utils.root_fs import (
+    format_dir_listing,
+    layer_root,
+    parse_relative_segments,
+    read_text_limited,
+    safe_resolve_under,
+)
+
 _TOPIC_SEGMENT = re.compile(r"^[a-zA-Z0-9][-a-zA-Z0-9_]{0,127}$")
 
 
 def _raw_root() -> Path | None:
-    vault = os.environ.get("OBSIDIAN_VAULT_PATH", "").strip()
-    if not vault:
-        return None
-    return Path(vault).expanduser().resolve() / "raw"
+    return layer_root("raw")
 
 
 @tool(parse_docstring=True)
@@ -45,18 +49,13 @@ def list_files_in_raw_topic(topic_directory: str) -> str:
     root = _raw_root()
     if root is None:
         return "OBSIDIAN_VAULT_PATH is not set."
-    target = (root / topic_directory).resolve()
-    if not str(target).startswith(str(root.resolve())):
-        return "Path escape rejected."
-    if not target.is_dir():
+    target = safe_resolve_under(root, [topic_directory])
+    if target is None or not target.is_dir():
         return f"No such topic directory: {topic_directory}"
-    entries = sorted(target.iterdir(), key=lambda p: p.name)[:40]
+    all_entries = sorted(target.iterdir(), key=lambda p: p.name)
+    entries = all_entries[:40]
     lines = [p.name + ("/" if p.is_dir() else "") for p in entries]
-    more = len(list(target.iterdir())) > 40
-    out = "\n".join(lines) if lines else "(empty)"
-    if more:
-        out += "\n... (truncated)"
-    return out
+    return format_dir_listing(lines, len(all_entries) > 40)
 
 
 @tool(parse_docstring=True)
@@ -75,18 +74,10 @@ def read_head_of_raw_topic_note(topic_directory: str, file_name: str, max_chars:
     root = _raw_root()
     if root is None:
         return "OBSIDIAN_VAULT_PATH is not set."
-    path = (root / topic_directory / file_name).resolve()
-    if not str(path).startswith(str(root.resolve())):
+    path = safe_resolve_under(root, [topic_directory, file_name])
+    if path is None:
         return "Path escape rejected."
-    if not path.is_file():
-        return f"Not a file: {file_name}"
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError as e:
-        return f"Read error: {e}"
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars] + "\n... [truncated]"
+    return read_text_limited(path, max_chars)
 
 
 __all__ = [
