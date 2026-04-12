@@ -12,6 +12,7 @@ from backend.wingman_edge_agents.agents.prompts.wiki_pompt import (
     QUERY_ROUTER_SYS_PROMPT,
     TOPIC_AGENT_SYS_PROMPT,
     WIKI_COMPILE_AGENT_SYS_PROMPT,
+    WIKI_LINT_AGENT_SYS_PROMPT,
     WIKI_QUERY_AGENT_SYS_PROMPT,
 )
 from backend.wingman_edge_agents.services.edge_llm_client.llm_client import LLMClient
@@ -129,6 +130,16 @@ class NodeAgent:
             os.getenv(
                 "WIKI_WIKI_AGENT_LLM",
                 os.getenv("WIKI_INGEST_MODEL", "llama3.1:8b"),
+            ),
+        )
+        self.lint_agent_llm = os.getenv(
+            "WIKI_LINT_AGENT_LLM",
+            os.getenv(
+                "WIKI_QUERY_AGENT_LLM",
+                os.getenv(
+                    "WIKI_WIKI_AGENT_LLM",
+                    os.getenv("WIKI_INGEST_MODEL", "llama3.1:8b"),
+                ),
             ),
         )
 
@@ -295,6 +306,73 @@ class NodeAgent:
             final_ans = " ".join(str(x) for x in final_ans)
         text = str(final_ans).strip()
         return text if text else "The wiki does not contain relevant information for this question."
+
+    def lint_agent(
+        self,
+        *,
+        trigger: Literal["post_ingest", "standalone"],
+        user_message: str,
+        preflight_scan_json: str,
+        post_ingest_context: str = "",
+    ) -> str:
+        """Lint ``wiki/`` via tools; return JSON summary string for ``WikiState.wiki_lint_generation``."""
+        llm = self.llm_client.init_ollama(
+            model=self.lint_agent_llm,
+            temperature=0,
+            reasoning=None,
+            num_ctx=80000,
+        )
+        tools = [
+            list_wiki_articles,
+            read_wiki_file,
+            write_wiki_article,
+            write_wiki_index,
+            append_wiki_log_entry,
+            list_raw_topic_directories,
+            list_files_in_raw_topic,
+            read_head_of_raw_topic_note,
+        ]
+        agent = create_agent(
+            model=llm,
+            system_prompt=WIKI_LINT_AGENT_SYS_PROMPT,
+            tools=tools,
+            middleware=[
+                ToolRetryMiddleware(max_retries=2, backoff_factor=1.5, initial_delay=0.5),
+                ModelRetryMiddleware(max_retries=2),
+            ],
+        )
+        today = date.today().isoformat()
+        ctx = (
+            f"\nPost-ingest context (raw path / title hints):\n{post_ingest_context}\n"
+            if post_ingest_context.strip()
+            else ""
+        )
+        user_block = (
+            f"Today's date: {today}\n"
+            f"Trigger: {trigger} (post_ingest = after an ingest compile on this run; standalone = user asked for lint only).\n"
+            f"User message / focus:\n---\n{user_message}\n---\n"
+            f"{ctx}"
+            "Preflight scan (JSON, from disk; trust structure):\n---\n"
+            f"{preflight_scan_json}\n---\n"
+            "Follow the system instructions: use tools, append log.md, then reply with ONLY the final JSON object."
+        )
+        result = agent.invoke({"messages": [("user", user_block)]})
+        messages = result.get("messages", [])
+        final_ans = messages[-1].content if messages else ""
+        if isinstance(final_ans, list):
+            final_ans = " ".join(str(x) for x in final_ans)
+        try:
+            summary = _parse_agent_json_final(str(final_ans))
+            return json.dumps(summary)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            transcript = _format_agent_messages(messages)
+            return json.dumps(
+                {
+                    "error": "lint_agent_final_not_json",
+                    "raw_final": str(final_ans)[:2000],
+                    "transcript_tail": transcript[-8000:],
+                },
+            )
 
 
 def topic_agent(

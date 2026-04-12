@@ -22,6 +22,7 @@ class WikiState(BaseModel):
     ingest_published_display: str = ""
     ingest_note_title: str = ""
     ingest_raw_topic: str = ""
+    wiki_lint_generation: str = ""
 
 
 class QueryRouterOutput(BaseModel):

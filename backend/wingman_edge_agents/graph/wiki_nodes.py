@@ -17,6 +17,7 @@ from backend.wingman_edge_agents.utils.wiki_ingest_fallback import (
     ensure_index_wikilinks_for_flat_wiki,
     ensure_wiki_fallback_article,
 )
+from backend.wingman_edge_agents.utils.wiki_lint_scan import scan_wiki_lint
 from datetime import date
 
 
@@ -183,3 +184,56 @@ def query_node(state: WikiState) -> WikiState:
         answer = f"Wiki query failed: {e}"
 
     return state.model_copy(update={"generation": answer})
+
+
+def wiki_lint(state: WikiState) -> WikiState:
+    """Run wiki hygiene after ingest compile or from router ``lint``."""
+    vault = os.environ.get("OBSIDIAN_VAULT_PATH", "").strip()
+    if not vault:
+        skipped = json.dumps({"skipped": True, "reason": "no_vault"})
+        return state.model_copy(update={"wiki_lint_generation": skipped})
+
+    vault_path = Path(vault).expanduser().resolve()
+    try:
+        ensure_wiki_scaffold(vault_path)
+    except Exception as e:
+        return state.model_copy(
+            update={
+                "wiki_lint_generation": json.dumps(
+                    {"error": "wiki_lint_scaffold_failed", "detail": str(e)},
+                ),
+            },
+        )
+
+    scan = scan_wiki_lint(vault_path)
+    route = (state.router_route or "").strip().lower()
+    trigger = "post_ingest" if route == "ingest" else "standalone"
+    user_message = (state.query or "").strip() or "(no user message; run full wiki lint)"
+    post_ctx_parts: list[str] = []
+    if state.ingest_output_path:
+        post_ctx_parts.append(f"ingest_output_path: {state.ingest_output_path}")
+    if state.ingest_note_title:
+        post_ctx_parts.append(f"ingest_note_title: {state.ingest_note_title}")
+    post_ingest_context = "\n".join(post_ctx_parts)
+
+    scan_json = json.dumps(scan.to_dict(), indent=2)
+    try:
+        lint_out = NodeAgent(provider="ollama").lint_agent(
+            trigger=trigger,
+            user_message=user_message,
+            preflight_scan_json=scan_json,
+            post_ingest_context=post_ingest_context,
+        )
+    except Exception as e:
+        lint_out = json.dumps({"error": "wiki_lint_failed", "detail": str(e)})
+
+    prior = (state.generation or "").strip()
+    lint_line = f"wiki_lint: {lint_out}"
+    generation_msg = f"{prior}\n{lint_line}" if prior else lint_line
+
+    return state.model_copy(
+        update={
+            "wiki_lint_generation": lint_out,
+            "generation": generation_msg,
+        },
+    )

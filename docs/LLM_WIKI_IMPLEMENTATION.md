@@ -53,17 +53,17 @@ At larger scale: local search over wiki markdown (e.g. hybrid keyword + vector t
 
 ---
 
-## 3. Current implementation (through **ingest → raw vault → wiki compile**, plus **wiki query**)
+## 3. Current implementation (through **ingest → raw vault → wiki compile → wiki lint**, plus **wiki query** and standalone **lint**)
 
-Ingest stores immutable captures under `raw/`, then (when the vault path is set) a **wiki compile agent** updates the compiled wiki under `wiki/` (articles, `index.md`, append to `log.md`). The **query** route reads the same flat `wiki/` layer and writes the synthesized answer into `WikiState.generation`.
+Ingest stores immutable captures under `raw/`, then (when the vault path is set) a **wiki compile agent** updates the compiled wiki under `wiki/` (articles, `index.md`, append to `log.md`). A **wiki lint agent** then runs on the same graph edge (after every compile step) to maintain index/link hygiene and append a **lint** entry to `log.md`. The **query** route reads the same flat `wiki/` layer and writes the synthesized answer into `WikiState.generation`. The router can also route directly to **lint** without an ingest on that run.
 
 ### 3.1 LangGraph workflow
 
 - **Graph builder:** `backend/wingman_edge_agents/workflows/wiki_graph.py`
   - `START` → `query_router` → conditional:
-    - `ingest` → `ingest_fetch` → `ingest_compile` → `END`
+    - `ingest` → `ingest_fetch` → `ingest_compile` → `wiki_lint` → `END`
     - `query` → `query_node` → `END`
-    - `lint` → `END` (stub: no lint node yet)
+    - `lint` → `wiki_lint` → `END`
 
 ### 3.2 Router (`ingest` | `query` | `lint`)
 
@@ -77,6 +77,7 @@ Ingest stores immutable captures under `raw/`, then (when the vault path is set)
 - **Nodes:** `backend/wingman_edge_agents/graph/wiki_nodes.py`
   - **`ingest_fetch`:** extract → topic placement → build markdown → save under `raw/` only; fills `WikiState` fields needed for compile (`data_source`, `ingest_output_path`, `ingest_*` metadata).
   - **`ingest_compile`:** `ensure_wiki_scaffold`, `NodeAgent.wiki_agent`, optional `ensure_wiki_fallback_article`; updates flat `wiki/*.md`, `index.md`, `log.md`.
+  - **`wiki_lint`:** after `ingest_compile` on ingest runs, or when the router selects `lint`; runs a read-only **preflight scan** (`backend/wingman_edge_agents/utils/wiki_lint_scan.py`) then `NodeAgent.lint_agent` with wiki write tools and read-only raw tools; stores JSON in `WikiState.wiki_lint_generation` and appends a line to `WikiState.generation`.
 
 ### 3.3a Raw capture (`ingest_fetch`)
 
@@ -110,6 +111,15 @@ Ingest stores immutable captures under `raw/`, then (when the vault path is set)
 - **Agent:** `NodeAgent.query_agent` in `backend/wingman_edge_agents/agents/wiki_agent.py` — LangChain `create_agent` with **read-only** tools `list_wiki_articles` and `read_wiki_file` from `vault_wiki_tools.py` (no writes to `wiki/` or `raw/`). Prompt: `WIKI_QUERY_AGENT_SYS_PROMPT` (read `index.md`, list articles, read every plausible candidate page, answer with wikilink **citations**; if nothing supports the question, state that the wiki has no relevant information).
 - **State:** the final markdown answer is stored in **`WikiState.generation`**. The question text is **`WikiState.query`** after routing (see §3.2).
 
+### 3.4c Wiki lint (`wiki_lint`)
+
+- **Node:** `wiki_lint` in `wiki_nodes.py` — runs after **`ingest_compile`** on ingest paths, or alone when the router selects **`lint`**.
+- **Scaffold:** `ensure_wiki_scaffold` when `OBSIDIAN_VAULT_PATH` is set; if unset, `wiki_lint_generation` is a skipped JSON object (same pattern as compile without vault).
+- **Preflight scan:** `scan_wiki_lint(vault_path)` walks flat `wiki/*.md`, checks `[[wiki/...]]` and `[[raw/...]]` wikilinks against on-disk files, and compares `index.md` wikilinks to article files. The resulting JSON is injected into the lint agent user message.
+- **Agent:** `NodeAgent.lint_agent` in `wiki_agent.py` — LangChain `create_agent` with wiki tools (`list_wiki_articles`, `read_wiki_file`, `write_wiki_article`, `write_wiki_index`, `append_wiki_log_entry`) plus read-only `vault_raw_tools` for raw path validation. Prompt: `WIKI_LINT_AGENT_SYS_PROMPT`. Model env: `WIKI_LINT_AGENT_LLM` (defaults through `WIKI_QUERY_AGENT_LLM` → `WIKI_WIKI_AGENT_LLM` → `WIKI_INGEST_MODEL`).
+- **Trigger:** `post_ingest` when `WikiState.router_route` is `ingest` (includes `WIKI_VERIFY_INGEST` forced ingest); otherwise `standalone` for router-driven lint.
+- **State:** `WikiState.wiki_lint_generation` holds the lint agent JSON summary (or error JSON). `WikiState.wiki_generation` remains the compile-step output.
+
 ### 3.5 Environment variables
 
 | Variable | Purpose |
@@ -121,12 +131,13 @@ Ingest stores immutable captures under `raw/`, then (when the vault path is set)
 | `WIKI_INGEST_MODEL` | Default Ollama model for topic placement ingest agent (`NodeAgent.topic_agent`). |
 | `WIKI_WIKI_AGENT_LLM` | Model for wiki compile agent (`NodeAgent.wiki_agent`); falls back to `WIKI_INGEST_MODEL`. |
 | `WIKI_QUERY_AGENT_LLM` | Model for wiki query agent (`NodeAgent.query_agent`); falls back to `WIKI_WIKI_AGENT_LLM` / `WIKI_INGEST_MODEL`. |
+| `WIKI_LINT_AGENT_LLM` | Model for wiki lint agent (`NodeAgent.lint_agent`); falls back to `WIKI_QUERY_AGENT_LLM` / `WIKI_WIKI_AGENT_LLM` / `WIKI_INGEST_MODEL`. |
 | `WIKI_COMPILE_BODY_MAX_CHARS` | Max size of ingest body passed into the wiki compile prompt (default large cap; truncates with a notice). |
 | `WIKI_VERIFY_INGEST` | Force ingest route for verification scripts. |
 
 ### 3.6 Local smoke / verification
 
-- `backend/wingman_edge_agents/workflows/main.py` — runs the compiled graph for file + URL ingest cases; asserts new `.md` under `{vault}/raw/`, **no subfolders** under `wiki/`, flat wiki articles with wikilinks/`#wiki`, and `wiki/index.md` containing wikilinks to at least one `wiki/<stem>`.
+- `backend/wingman_edge_agents/workflows/main.py` — runs the compiled graph for file + URL ingest cases (with `WIKI_VERIFY_INGEST` forcing ingest); asserts new `.md` under `{vault}/raw/`, **no subfolders** under `wiki/`, flat wiki articles with wikilinks/`#wiki`, `wiki/index.md` containing wikilinks to at least one `wiki/<stem>`, and a non-empty **`wiki_lint_generation`** after each ingest (post-compile lint). Preflight scan is covered by `backend/wingman_edge_agents/tests/test_wiki_lint_scan.py` (unittest, no Ollama).
 
 ---
 
@@ -149,10 +160,10 @@ Implement the following in order that makes sense for your releases; each item s
 - **Done (initial):** `query_node` runs `NodeAgent.query_agent` with read-only wiki tools: read `index.md`, list flat articles, read relevant `wiki/*.md` pages, synthesize an answer with **wikilink citations**; if nothing in the wiki supports the question, the agent is instructed to say so explicitly.
 - **Still open:** optional **filing** step to write the answer (or a distilled version) back as a new wiki page so exploration compounds; richer search when `index.md` alone is not enough.
 
-### 4.4 Lint operation (graph stub today)
+### 4.4 Lint operation (initial implementation)
 
-- Implement checks suggested in the gist: orphans, stale vs newer sources, missing entity pages, broken links, contradictions.
-- Can start as a single LLM pass with a structured checklist, then harden with deterministic link parsing.
+- **Done:** `wiki_lint` graph node after `ingest_compile`; router `lint` → `wiki_lint`; read-only `scan_wiki_lint` preflight (wikilinks + index vs disk); `NodeAgent.lint_agent` with checklist-style prompt (Karpathy / [karpathy-llm-wiki SKILL](https://github.com/Astro-Han/karpathy-llm-wiki/blob/main/SKILL.md)) adapted for flat `wiki/` and Obsidian wikilinks; append `log.md` lint section from the agent.
+- **Still open:** stronger deterministic auto-fix without LLM, contradiction detection beyond JSON `report_only`, and deeper orphan/stale analysis.
 
 ### 4.5 Schema document
 
@@ -185,12 +196,13 @@ Implement the following in order that makes sense for your releases; each item s
 |---------|------|
 | Graph topology | `backend/wingman_edge_agents/workflows/wiki_graph.py` |
 | Router node | `backend/wingman_edge_agents/graph/wiki_router.py` |
-| Ingest + query nodes (`ingest_fetch`, `ingest_compile`, `query_node`) | `backend/wingman_edge_agents/graph/wiki_nodes.py` |
+| Ingest + query + lint nodes (`ingest_fetch`, `ingest_compile`, `query_node`, `wiki_lint`) | `backend/wingman_edge_agents/graph/wiki_nodes.py` |
+| Wiki lint preflight scan | `backend/wingman_edge_agents/utils/wiki_lint_scan.py` |
 | State / DTOs | `backend/wingman_edge_agents/graph/data_models.py` |
 | Raw save helpers | `backend/wingman_edge_agents/utils/ingest_save.py` |
 | Extract file / URL | `backend/wingman_edge_agents/utils/wiki_utils.py` |
-| Router + ingest + wiki compile + wiki query agents | `backend/wingman_edge_agents/agents/wiki_agent.py` |
-| Router / ingest / wiki compile / wiki query prompts | `backend/wingman_edge_agents/agents/prompts/wiki_pompt.py` |
+| Router + ingest + wiki compile + wiki query + wiki lint agents | `backend/wingman_edge_agents/agents/wiki_agent.py` |
+| Router / ingest / wiki compile / wiki query / wiki lint prompts | `backend/wingman_edge_agents/agents/prompts/wiki_pompt.py` |
 | Read-only raw tools | `backend/wingman_edge_agents/tools/vault_raw_tools.py` |
 | Wiki read/write tools | `backend/wingman_edge_agents/tools/vault_wiki_tools.py` |
 | Shared vault path + read/write primitives | `backend/wingman_edge_agents/tools/root_fs.py` |
@@ -207,3 +219,4 @@ Implement the following in order that makes sense for your releases; each item s
 | 2026-04-11 | Initial spec: gist summary, repo mapping, ingest-complete milestone, backlog for wiki/query/lint/index/log/schema. |
 | 2026-04-11 | Wiki compile after ingest: `wiki/` tools, `NodeAgent.wiki_agent`, Obsidian wikilinks + tags in compile prompt; smoke asserts on wiki output. |
 | 2026-04-12 | Wiki query: `query_node`, `NodeAgent.query_agent` (read-only wiki tools), router updates `WikiState.query`; answer in `WikiState.generation`. |
+| 2026-04-12 | Wiki lint: `wiki_lint` after `ingest_compile`, router `lint` → `wiki_lint`; `scan_wiki_lint` + `NodeAgent.lint_agent`; `WikiState.wiki_lint_generation`. |

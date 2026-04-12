@@ -46,7 +46,7 @@ def _wiki_flat_article_paths() -> list[Path]:
 def main() -> None:
     load_dotenv()
     os.environ["OBSIDIAN_VAULT_PATH"] = VAULT
-    # os.environ["WIKI_VERIFY_INGEST"] = "1"
+    os.environ["WIKI_VERIFY_INGEST"] = "0"
     RAW_ROOT.mkdir(parents=True, exist_ok=True)
 
     before = set(_collect_md_under_raw())
@@ -75,7 +75,6 @@ def main() -> None:
                 file_path=None,
             ),
         ),
-        
     ]
 
     try:
@@ -89,6 +88,7 @@ def main() -> None:
             print("ingest_output_path:", path)
             print("generation:", final.get("generation"))
             print("wiki_generation:", final.get("wiki_generation"))
+            print("wiki_lint_generation:", final.get("wiki_lint_generation"))
             if path:
                 p = Path(path)
                 assert p.suffix == ".md", f"Expected .md, got {p}"
@@ -159,7 +159,26 @@ def main() -> None:
             "fallback_stub"
         ):
             raise SystemExit(f"wiki_compile reported error: {parsed!r}")
-        print("\nOK: flat wiki/, index.md wikilinks, articles with wikilinks and #wiki")
+
+        lint_raw = (last_final or {}).get("wiki_lint_generation") or ""
+        if not str(lint_raw).strip():
+            raise SystemExit("Expected wiki_lint_generation after ingest (post-compile lint).")
+        try:
+            lint_parsed = json.loads(lint_raw) if isinstance(lint_raw, str) else {}
+        except json.JSONDecodeError:
+            lint_parsed = {}
+        if isinstance(lint_parsed, dict) and lint_parsed.get("skipped"):
+            raise SystemExit(f"wiki_lint skipped unexpectedly: {lint_parsed!r}")
+        if isinstance(lint_parsed, dict) and lint_parsed.get("error") == "lint_agent_final_not_json":
+            raise SystemExit(f"wiki_lint agent did not return JSON: {lint_parsed!r}")
+
+        log_text = (WIKI_ROOT / "log.md").read_text(encoding="utf-8", errors="replace")
+        if "lint" not in log_text.lower():
+            raise SystemExit(
+                "Expected wiki/log.md to mention lint after wiki_lint node (agent should append log)."
+            )
+
+        print("\nOK: flat wiki/, index.md wikilinks, articles with wikilinks and #wiki, post-ingest lint")
     finally:
         os.environ.pop("WIKI_VERIFY_INGEST", None)
 
