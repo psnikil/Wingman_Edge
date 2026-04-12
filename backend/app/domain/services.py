@@ -1,7 +1,9 @@
 import re
 import os
-from fastapi import Depends
-from typing import List
+import shutil
+import time
+from contextlib import contextmanager
+from typing import Generator, List
 # from app.schemas.chat import Chat, Message, Prompt
 from backend.wingman_edge_agents.utils.ollama_client import is_ollama_running, start_ollama, list_ollama_models
 from backend.app.schemas.misc import IsInit
@@ -22,6 +24,11 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
 
 
+def ensure_database_schema() -> None:
+    """Create tables from ORM metadata if they are missing (safe to call on every startup)."""
+    Base.metadata.create_all(bind=engine)
+
+
 
 # Dependency for session
 def get_db():
@@ -30,6 +37,19 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+@contextmanager
+def _chat_session(db: Session | None) -> Generator[Session, None, None]:
+    """Use caller session if provided; otherwise open/close SessionLocal."""
+    if db is not None:
+        yield db
+    else:
+        s = SessionLocal()
+        try:
+            yield s
+        finally:
+            s.close()
 
 
 # class UtilServices:       
@@ -66,117 +86,121 @@ class ChatService:
     def __init__(self):
         pass
 
-    def create_chat(self, db:Session, userPrompt='' )->str:
-        chat_id = str(uuid.uuid4())
+    def create_chat(self, chat_id: str, userPrompt: str = "", db: Session | None = None) -> str:
+        effective_id = (chat_id or "").strip() or str(uuid.uuid4())
         if userPrompt:
             chat_name = f"New Chat: {userPrompt[:6]}"
             chat_summary = userPrompt[:12]
         else:
             chat_name = "New Chat"
-            chat_summary = 'No Messages!!!!'
+            chat_summary = "No Messages!!!!"
 
-        created_at = datetime.now()
-        updated_at = datetime.now()
         chat = Chat(
-            chatId=chat_id,
+            chatId=effective_id,
             chatName=chat_name,
             chatSummary=chat_summary,
             messages=[],
         )
-        # Adding to database
-        try:
-            new_chat = Chat_db(**chat.__dict__)
-            add_chat(db,new_chat)
-        except Exception as e:
-            print('There was an error adding chat to database',e)
+        with _chat_session(db) as s:
+            try:
+                new_chat = Chat_db(**chat.__dict__)
+                add_chat(s, new_chat)
+            except Exception as e:
+                print("There was an error adding chat to database", e)
+                raise
 
-        return chat_id
-    
-    def get_chat_byID(self, chatId, db: Session)->Chat:
- 
-        """ Retrieve chat by ID if given else raise error """
-        
-        print('the chat id in services is',chatId)
-        try:
-            chat_db = get_chat(session=db, chat_id=chatId)
-            messages_db = get_messages(session=db, chat_id=chatId)
-            messages = [Message(**message.__dict__) for message in messages_db]
-            l_chat = Chat(**chat_db.__dict__,messages=messages)
-            print(f'2:The chat got by the ID {chatId} is {l_chat}')
+        return effective_id
 
-            return l_chat
-        except Exception as e:
-            print(f'there was an error retrieving chat with the ID {chatId} and error is {e}')
-            raise ValueError(f"Error getting chat with ID {chatId} amd error is {e}")
-    
-    def get_all_chats(self,db: Session):
+    def get_chat_byID(self, chat_id: str, db: Session | None = None) -> Chat | None:
+        """Return chat by ID, or None if missing."""
+        print("the chat id in services is", chat_id)
+        with _chat_session(db) as s:
+            try:
+                chat_db = get_chat(chat_id=chat_id, session=s)
+                if chat_db is None:
+                    return None
+                messages_db = get_messages(chat_id=chat_id, session=s)
+                messages = [Message(**message.__dict__) for message in messages_db]
+                l_chat = Chat(**chat_db.__dict__, messages=messages)
+                print(f"2:The chat got by the ID {chat_id} is {l_chat}")
+                return l_chat
+            except Exception as e:
+                print(f"there was an error retrieving chat with the ID {chat_id} and error is {e}")
+                raise ValueError(
+                    f"Error getting chat with ID {chat_id} and error is {e}"
+                ) from e
+
+    def get_all_chats(self, db: Session | None = None) -> List[Chat]:
         """
         Return all chats as list of dicts (serialized for frontend)
         TODO: add pagination and sorting
         """
+        with _chat_session(db) as s:
+            all_chats = get_allchats(s)
+            print("the value of all chats in services is", all_chats)
+            if not all_chats:
+                print("There are no chats in the db currently")
+                return []
+            return all_chats
 
-        all_chats = get_allchats(db)
-        print('the value of all chats in services is',all_chats)
-        if not all_chats:
-            print('There are no chats in the db currently')
-            return []
-        return all_chats
-    
-    def get_messages(self, chatId, db: Session):
- 
+    def get_messages(self, chatId: str, db: Session | None = None) -> List[Message]:
+        with _chat_session(db) as s:
+            try:
+                return get_messages(session=s, chat_id=chatId)
+            except Exception as e:
+                print(f"there was an error getting the chat message due to: {e}")
+                raise
 
-        try:
-            
-            messages = get_messages(session=db, chat_id=chatId)
-
-            return messages
-        except Exception as e:
-            print(f'there was an error getting the chat message due to: {e}')
-            raise e
-
-    
     """ TODO: The adding of messages can be consolidated into a single method if needed """
 
-    def add_chat_message(self, chat_id:str, message:Message, db: Session):
- 
+    def add_chat_message(
+        self, chat_id: str, message: Message, db: Session | None = None
+    ) -> bool:
+        with _chat_session(db) as s:
+            try:
+                new_msg = Message(
+                    messageId=str(uuid.uuid4()),
+                    content=message.content,
+                    role=message.role,
+                    timestamp=datetime.now(),
+                )
+                new_user_message = Message_db(**new_msg.__dict__, chatId=chat_id)
+                _ = add_message(s, new_user_message)
+            except Exception as e:
+                print("There was an error in adding the user message", e)
+                raise
 
-        try:
-            
-            # Add user prompt
-            new_msg = Message(messageId=str(uuid.uuid4()), content=message.content, role=message.role, timestamp=datetime.now())
-            new_user_message = Message_db(**new_msg.__dict__,chatId=chat_id)
-            _ = add_message(db, new_user_message)
-        except Exception as e:
-            print("There was an error in adding the user message",e)
-            raise e
-        
-    def get_chat_history(self, chatId,db: Session):
- 
-        chat = self.get_chat_byID(chatId,db) #remove, to get from database
+        return True
+
+    def get_chat_history(self, chatId: str, db: Session | None = None) -> List[Message]:
+        chat = self.get_chat_byID(chatId, db)
+        if chat is None:
+            return []
         return chat.messages
-    
-    def update_chat_meta_data(self,chatId,userPrompt,db: Session):
- 
-        try:
-            chat = self.get_chat_byID(chatId,db) #remove, to get from database
 
-            chat_name = f"New Chat: {userPrompt[:6]}"
-            chat_summary = userPrompt[:12]
-            updated_at = datetime.now()
+    def update_chat_meta_data(
+        self, chatId: str, userPrompt: str, db: Session | None = None
+    ) -> bool:
+        with _chat_session(db) as s:
+            try:
+                chat = self.get_chat_byID(chatId, s)
+                if chat is None:
+                    return False
 
-            # update chat
-            chat.chatName = chat_name
-            chat.chatSummary = chat_summary
-            chat.updatedAt = updated_at
+                chat_name = f"New Chat: {userPrompt[:6]}"
+                chat_summary = userPrompt[:12]
+                updated_at = datetime.now()
 
-            
-            _ = update_chat(db,chatId,chat)
-            # chats[chatId] = chat
-            return True
+                chat.chatName = chat_name
+                chat.chatSummary = chat_summary
+                chat.updatedAt = updated_at
 
-        except Exception as e:
-            print(f'There was an error in updating the chat',e)
-            raise e
+                _ = update_chat(s, chatId, chat)
+                return True
+
+            except Exception as e:
+                print("There was an error in updating the chat", e)
+                raise
 
 
 
@@ -192,20 +216,28 @@ class IsInitService:
 
 
     def check_init(self):
-
         if not is_ollama_running():
-            try:
-                start_ollama()
-                self.update_init(status=True)
-                return self.is_init
-            except Exception as e:
-                print(f"❌ Error starting Ollama: {e}")
+            if shutil.which("ollama"):
+                try:
+                    start_ollama()
+                    for _ in range(30):
+                        if is_ollama_running():
+                            break
+                        time.sleep(0.5)
+                except Exception as e:
+                    print(f"❌ Error starting Ollama: {e}")
+                    self.update_init(status=False)
+                    return IsInit(is_init=False, err_message=str(e))
+            if not is_ollama_running():
                 self.update_init(status=False)
-                return e
+                return IsInit(
+                    is_init=False,
+                    err_message="Ollama is not reachable at OLLAMA_BASE_URL",
+                )
+            self.update_init(status=True)
+            return IsInit(is_init=self.is_init)
 
-
-        else:
-            list_ollama_models()
+        list_ollama_models()
 
         return IsInit(is_init=self.is_init)
     

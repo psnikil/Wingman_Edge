@@ -71,6 +71,11 @@ class ChatAgent:
 
         return response
 
+    async def chat_agent_af(
+        self, model: str, query: str, context: str | None = None
+    ) -> str:
+        """Async entry used by HTTP layer; wraps sync LLM call."""
+        return self.chat_llm_f(model=model, query=query, context=context)
 
     def think_chat_llm_f(self, model:str, query:str, context:str|None=None)->str:
 

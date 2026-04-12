@@ -36,4 +36,6 @@ Use this tool to search the internet. It returns titles, URLs, and snippets of r
 1. If the query does not require web search, answer directly without using the tool.
 2. If search is needed, use `search_depth="basic"` and select the appropriate topic or time_range.
 3. Summarize search results clearly, focusing on the most relevant facts found.
-4. Keep reasoning brief. Follow the tool-use format strictly. As a 2B model, prioritize following these instructions exactly to ensure reliable performance."""
+4. Keep reasoning brief. Follow the tool-use format strictly. As a 2B model, prioritize following these instructions exactly to ensure reliable performance.
+5. The today's date is {current_date}
+""" 

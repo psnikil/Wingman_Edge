@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:15
@@ -13,24 +11,65 @@ services:
       - ./database/initdb:/docker-entrypoint-initdb.d
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wingman -d wingman"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+      - ./docker/ollama/entrypoint.sh:/ollama-entrypoint.sh:ro
+    # Host port configurable; container keeps official Ollama listen port 11434.
+    ports:
+      - "${OLLAMA_PUBLISH_PORT:-2400}:11434"
+    entrypoint: ["/bin/sh", "/ollama-entrypoint.sh"]
 
   backend:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: backend/Dockerfile
     restart: unless-stopped
+    env_file:
+      - ${COMPOSE_ENV_FILE:-.env}
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_started
     environment:
-      DATABASE_URL: postgres://wingman:wingmanpass@db:5432/wingman
-      TELEGRAM_TOKEN: "" # set your telegram token here or use .env
-      OLLAMA_HOST: "http://host.docker.internal:11434" # adjust if using local Ollama
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://wingman:wingmanpass@db:5432/wingman}
+      # Must be service name + container port, not localhost (localhost = this container).
+      # Overrides OLLAMA_BASE_URL from env_file when both are set.
+      OLLAMA_BASE_URL: http://ollama:11434
     ports:
       - "8000:8000"
-    volumes:
-      - .:/app
-      - /app/.venv # Keep container's .venv from being overwritten by host mapping
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
 
+  telegram:
+    build:
+      context: .
+      dockerfile: telegram/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ${COMPOSE_ENV_FILE:-.env}
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      # TELEGRAM_* come only from env_file above — do not set ${TELEGRAM:-} here or an empty
+      # value overrides the file when compose interpolation misses the var.
+      CHAT_LLM: ${CHAT_LLM:-qwen3.5:2b}
+      BACKEND_URL: ${BACKEND_URL:-http://backend:8000}
 
 volumes:
   db_data:
+  ollama_data:

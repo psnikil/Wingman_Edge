@@ -1,4 +1,7 @@
+import asyncio
+import contextlib
 import os
+
 from dotenv import load_dotenv
 from telegram import ForceReply, Update
 from telegram.ext import (
@@ -19,11 +22,45 @@ load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_BOT_CHAT_ID = os.getenv("TELEGRAM_BOT_CHAT_ID")
-URL="http://localhost:8000"
+URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
 CHAT_LLM = os.getenv("CHAT_LLM")
 
+_AGENT_MAX_SEC = float(os.getenv("WINGMAN_AGENT_MAX_SEC", "300"))
+# Backend /chat and /web_agent honor WINGMAN_AGENT_MAX_SEC; Telegram must not give up first.
+_BACKEND_LONG_TIMEOUT = httpx.Timeout(
+    float(os.getenv("TELEGRAM_BACKEND_TIMEOUT_SEC", str(_AGENT_MAX_SEC))),
+    connect=30.0,
+)
+_WEB_AGENT_TIMEOUT = httpx.Timeout(
+    float(os.getenv("TELEGRAM_WEB_AGENT_TIMEOUT_SEC", str(_AGENT_MAX_SEC))),
+    connect=30.0,
+)
 
 client = httpx.AsyncClient()
+
+
+async def _typing_heartbeat_while(chat, main_task: asyncio.Task) -> None:
+    """Refresh typing indicator until main_task finishes (Telegram typing expires ~5s)."""
+    try:
+        while not main_task.done():
+            await chat.send_action("typing")
+            await asyncio.sleep(4.5)
+    except asyncio.CancelledError:
+        return
+
+
+def _api_error_user_text(response: httpx.Response) -> str:
+    try:
+        data = response.json()
+        detail = data.get("detail")
+        if detail is not None:
+            return detail if isinstance(detail, str) else str(detail)
+    except Exception:
+        pass
+    text = (response.text or "").strip()
+    if text:
+        return text
+    return f"Backend returned HTTP {response.status_code}"
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -139,15 +176,36 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.chat.send_action("typing")
         print('The agent is ', agent)
         if "chat_agent" == agent:
-            # using REST API
-            response = await client.post(f"{URL}/chat", json=payload)
+            response = await client.post(
+                f"{URL}/chat", json=payload, timeout=_BACKEND_LONG_TIMEOUT
+            )
             print("The response is: ", response)
-            ai_reply = response.json()
         elif "web_agent" == agent:
-            # using REST API
-            response = await client.post(f"{URL}/web_agent", json=payload)
+            post_task = asyncio.create_task(
+                client.post(
+                    f"{URL}/web_agent",
+                    json=payload,
+                    timeout=_WEB_AGENT_TIMEOUT,
+                )
+            )
+            pump = asyncio.create_task(
+                _typing_heartbeat_while(update.message.chat, post_task)
+            )
+            try:
+                response = await post_task
+            finally:
+                pump.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await pump
             print("The response is: ", response)
-            ai_reply = response.json()
+        else:
+            return
+
+        if response.is_error:
+            await update.message.reply_text(_api_error_user_text(response))
+            return
+
+        ai_reply = response.json()
         history.append(f"User: {user_text}")
         history.append(f"AI: {ai_reply}")
         turn+=1

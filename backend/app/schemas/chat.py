@@ -9,7 +9,7 @@ class Message(BaseModel):
     content: str
     role: str  # 'user' or 'assistant'
     timestamp: datetime = Field(default_factory=datetime.now)
-    llm:str
+    llm: str = ""
     
 
 class Chat(BaseModel):

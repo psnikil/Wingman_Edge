@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wingman-backend"
+version = "0.1.0"
+description = "Wingman Edge FastAPI backend and agents"
+requires-python = ">=3.13"
+dependencies = [
+    "bs4>=0.0.2",
+    "fastapi>=0.135.2",
+    "langchain>=1.2.13",
+    "langchain-anthropic>=1.4.0",
+    "langchain-community>=0.4.1",
+    "langchain-experimental>=0.4.1",
+    "langchain-ollama>=1.0.1",
+    "langchain-openai>=1.1.12",
+    "langchain-tavily>=0.2.17",
+    "langgraph>=1.1.3",
+    "playwright>=1.58.0",
+    "psycopg[binary]>=3.2",
+    "pydantic>=2.12.5",
+    "pydantic-settings>=2.0",
+    "pymupdf>=1.27.2.2",
+    "pymupdf4llm>=1.27.2.2",
+    "python-dotenv>=1.0",
+    "sqlalchemy>=2.0.48",
+    "uvicorn>=0.42.0",
+]
+
+[tool.setuptools.package-dir]
+"backend" = "."
+
+[tool.setuptools]
+packages = [
+    "backend",
+    "backend.wingman_edge_agents",
+    "backend.database",
+    "backend.app",
+    "backend.wingman_edge_agents.agents",
+    "backend.wingman_edge_agents.services",
+    "backend.wingman_edge_agents.utils",
+    "backend.wingman_edge_agents.tools",
+    "backend.wingman_edge_agents.tests",
+    "backend.wingman_edge_agents.graph",
+    "backend.wingman_edge_agents.workflows",
+    "backend.wingman_edge_agents.agents.prompts",
+    "backend.wingman_edge_agents.services.edge_llm_client",
+    "backend.app.schemas",
+    "backend.app.domain",
+    "backend.app.api",
+    "backend.app.infra",
+    "backend.app.api.v1",
+]
+py-modules = ["backend.main"]
