@@ -158,3 +158,28 @@ def ingest_compile(state: WikiState) -> WikiState:
             "wiki_generation": wiki_generation,
         },
     )
+
+
+def query_node(state: WikiState) -> WikiState:
+    """Read flat ``wiki/*.md`` via tools and synthesize an answer into ``generation``."""
+    vault = os.environ.get("OBSIDIAN_VAULT_PATH", "").strip()
+    if not vault:
+        msg = "OBSIDIAN_VAULT_PATH not set; cannot query the wiki on disk."
+        return state.model_copy(update={"generation": msg})
+
+    vault_path = Path(vault).expanduser().resolve()
+    try:
+        ensure_wiki_scaffold(vault_path)
+    except Exception as e:
+        return state.model_copy(update={"generation": f"Wiki scaffold failed: {e}"})
+
+    question = (state.query or "").strip()
+    if not question:
+        return state.model_copy(update={"generation": "No question text after routing; nothing to query."})
+
+    try:
+        answer = NodeAgent(provider="ollama").query_agent(question)
+    except Exception as e:
+        answer = f"Wiki query failed: {e}"
+
+    return state.model_copy(update={"generation": answer})

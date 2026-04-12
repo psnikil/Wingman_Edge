@@ -14,6 +14,7 @@ RAW_ROOT = Path(VAULT) / "raw"
 WIKI_ROOT = Path(VAULT) / "wiki"
 TEST_FILE = "/home/nikil/Documents/Projects/Agent_Orchestrator/data/session_2e62c042.md"
 TEST_URL = "/home/nikil/Documents/Projects/Wingman_Edge/docs/LLM_WIKI_IMPLEMENTATION.md"
+TEST_QUERY = "How does the LLM wiki maintain a knowledge base?"
 
 
 def _collect_md_under_raw() -> list[Path]:
@@ -45,7 +46,7 @@ def _wiki_flat_article_paths() -> list[Path]:
 def main() -> None:
     load_dotenv()
     os.environ["OBSIDIAN_VAULT_PATH"] = VAULT
-    os.environ["WIKI_VERIFY_INGEST"] = "1"
+    # os.environ["WIKI_VERIFY_INGEST"] = "1"
     RAW_ROOT.mkdir(parents=True, exist_ok=True)
 
     before = set(_collect_md_under_raw())
@@ -53,20 +54,28 @@ def main() -> None:
     last_final: dict | None = None
 
     cases: list[tuple[str, WikiState]] = [
+        # (
+        #     "file ingest",
+        #     WikiState(
+        #         query=f"Ingest this markdown file into the vault raw tree: {TEST_FILE}",
+        #         file_path=None,
+        #     ),
+        # ),
+        # (
+        #     "url ingest",
+        #     WikiState(
+        #         query=TEST_URL,
+        #         file_path=None,
+        #     ),
+        # ),
         (
-            "file ingest",
+            "Query test",
             WikiState(
-                query="Ingest this markdown file into the vault raw tree.",
-                file_path=TEST_FILE,
-            ),
-        ),
-        (
-            "url ingest",
-            WikiState(
-                query=TEST_URL,
+                query=TEST_QUERY,
                 file_path=None,
             ),
         ),
+        
     ]
 
     try:

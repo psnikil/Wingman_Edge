@@ -25,4 +25,9 @@ def query_router(state: WikiState) -> WikiState:
     if not isinstance(router_result, QueryRouterOutput):
         raise TypeError(f"Expected QueryRouterOutput, got {type(router_result)}")
 
-    return state.model_copy(update={"router_route": router_result.action})
+    return state.model_copy(
+        update={
+            "router_route": router_result.action,
+            "query": router_result.query,
+        }
+    )

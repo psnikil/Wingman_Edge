@@ -53,16 +53,16 @@ At larger scale: local search over wiki markdown (e.g. hybrid keyword + vector t
 
 ---
 
-## 3. Current implementation (through **ingest → raw vault → wiki compile**)
+## 3. Current implementation (through **ingest → raw vault → wiki compile**, plus **wiki query**)
 
-Ingest stores immutable captures under `raw/`, then (when the vault path is set) a **wiki compile agent** updates the compiled wiki under `wiki/` (articles, `index.md`, append to `log.md`).
+Ingest stores immutable captures under `raw/`, then (when the vault path is set) a **wiki compile agent** updates the compiled wiki under `wiki/` (articles, `index.md`, append to `log.md`). The **query** route reads the same flat `wiki/` layer and writes the synthesized answer into `WikiState.generation`.
 
 ### 3.1 LangGraph workflow
 
 - **Graph builder:** `backend/wingman_edge_agents/workflows/wiki_graph.py`
   - `START` → `query_router` → conditional:
     - `ingest` → `ingest_fetch` → `ingest_compile` → `END`
-    - `query` → `END` (stub: no wiki query node yet)
+    - `query` → `query_node` → `END`
     - `lint` → `END` (stub: no lint node yet)
 
 ### 3.2 Router (`ingest` | `query` | `lint`)
@@ -70,7 +70,7 @@ Ingest stores immutable captures under `raw/`, then (when the vault path is set)
 - **Node:** `backend/wingman_edge_agents/graph/wiki_router.py`
 - **Model:** structured output `QueryRouterOutput` (`action`, `query`) in `backend/wingman_edge_agents/graph/data_models.py`
 - **Prompts:** `backend/wingman_edge_agents/agents/prompts/wiki_pompt.py` (`QUERY_ROUTER_SYS_PROMPT`)
-- **Test override:** if `WIKI_VERIFY_INGEST` is `1` / `true` / `yes`, the router **forces** `ingest` (used by `workflows/main.py` smoke script).
+- **State / test override:** if `WIKI_VERIFY_INGEST` is `1` / `true` / `yes`, the router **forces** `ingest` (used by `workflows/main.py` smoke script) and does **not** overwrite the incoming `query`. Otherwise `WikiState.router_route` and `WikiState.query` are updated from structured output (`query` is set to `QueryRouterOutput.query` so downstream nodes share one canonical question string).
 
 ### 3.3 Ingest nodes: raw capture then wiki compile
 
@@ -103,6 +103,13 @@ Ingest stores immutable captures under `raw/`, then (when the vault path is set)
 - **State:** `WikiState.wiki_generation` holds a JSON summary string from the compile step (or an error object as JSON). `WikiState.generation` includes the raw path line and the wiki summary.
 - **Fallback:** if the LLM completes but no flat `wiki/<slug>.md` article exists yet, `ensure_wiki_fallback_article` in `backend/wingman_edge_agents/utils/wiki_ingest_fallback.py` writes a minimal stub at `wiki/<slug>-ingest-wiki.md` (Obsidian wikilinks + tags) and appends `log.md`.
 
+### 3.4b Wiki query (`query_node`)
+
+- **Node:** `query_node` in `backend/wingman_edge_agents/graph/wiki_nodes.py` — runs when the router selects `query`.
+- **Scaffold:** `ensure_wiki_scaffold` (same as compile) when `OBSIDIAN_VAULT_PATH` is set; if unset, `generation` explains that the vault is not configured.
+- **Agent:** `NodeAgent.query_agent` in `backend/wingman_edge_agents/agents/wiki_agent.py` — LangChain `create_agent` with **read-only** tools `list_wiki_articles` and `read_wiki_file` from `vault_wiki_tools.py` (no writes to `wiki/` or `raw/`). Prompt: `WIKI_QUERY_AGENT_SYS_PROMPT` (read `index.md`, list articles, read every plausible candidate page, answer with wikilink **citations**; if nothing supports the question, state that the wiki has no relevant information).
+- **State:** the final markdown answer is stored in **`WikiState.generation`**. The question text is **`WikiState.query`** after routing (see §3.2).
+
 ### 3.5 Environment variables
 
 | Variable | Purpose |
@@ -113,6 +120,7 @@ Ingest stores immutable captures under `raw/`, then (when the vault path is set)
 | `ROUTER_LLM`, `TOPIC_AGENT_LLM`, `DEFAULT_OLLAMA_MODEL` | Ollama models for router / topic agent (see `wiki_agent.py`). |
 | `WIKI_INGEST_MODEL` | Default Ollama model for topic placement ingest agent (`NodeAgent.topic_agent`). |
 | `WIKI_WIKI_AGENT_LLM` | Model for wiki compile agent (`NodeAgent.wiki_agent`); falls back to `WIKI_INGEST_MODEL`. |
+| `WIKI_QUERY_AGENT_LLM` | Model for wiki query agent (`NodeAgent.query_agent`); falls back to `WIKI_WIKI_AGENT_LLM` / `WIKI_INGEST_MODEL`. |
 | `WIKI_COMPILE_BODY_MAX_CHARS` | Max size of ingest body passed into the wiki compile prompt (default large cap; truncates with a notice). |
 | `WIKI_VERIFY_INGEST` | Force ingest route for verification scripts. |
 
@@ -136,10 +144,10 @@ Implement the following in order that makes sense for your releases; each item s
 - **Done on ingest:** agent is instructed to rewrite `index.md` and append `log.md` on each successful compile.
 - **Still open:** deterministic validation (parse tables vs on-disk files), query/lint-driven updates, and machine-grep hygiene checks in code—not only via the LLM.
 
-### 4.3 Query operation (graph stub today)
+### 4.3 Query operation
 
-- **Node:** read `index.md` (or search), open relevant wiki pages, synthesize answer with **citations** (paths or wikilinks).
-- **Filing:** optional step to write the answer (or a distilled version) back as a new wiki page so exploration compounds.
+- **Done (initial):** `query_node` runs `NodeAgent.query_agent` with read-only wiki tools: read `index.md`, list flat articles, read relevant `wiki/*.md` pages, synthesize an answer with **wikilink citations**; if nothing in the wiki supports the question, the agent is instructed to say so explicitly.
+- **Still open:** optional **filing** step to write the answer (or a distilled version) back as a new wiki page so exploration compounds; richer search when `index.md` alone is not enough.
 
 ### 4.4 Lint operation (graph stub today)
 
@@ -177,12 +185,12 @@ Implement the following in order that makes sense for your releases; each item s
 |---------|------|
 | Graph topology | `backend/wingman_edge_agents/workflows/wiki_graph.py` |
 | Router node | `backend/wingman_edge_agents/graph/wiki_router.py` |
-| Ingest nodes (`ingest_fetch`, `ingest_compile`) | `backend/wingman_edge_agents/graph/wiki_nodes.py` |
+| Ingest + query nodes (`ingest_fetch`, `ingest_compile`, `query_node`) | `backend/wingman_edge_agents/graph/wiki_nodes.py` |
 | State / DTOs | `backend/wingman_edge_agents/graph/data_models.py` |
 | Raw save helpers | `backend/wingman_edge_agents/utils/ingest_save.py` |
 | Extract file / URL | `backend/wingman_edge_agents/utils/wiki_utils.py` |
-| Router + ingest agents | `backend/wingman_edge_agents/agents/wiki_agent.py` |
-| Router / ingest / wiki compile prompts | `backend/wingman_edge_agents/agents/prompts/wiki_pompt.py` |
+| Router + ingest + wiki compile + wiki query agents | `backend/wingman_edge_agents/agents/wiki_agent.py` |
+| Router / ingest / wiki compile / wiki query prompts | `backend/wingman_edge_agents/agents/prompts/wiki_pompt.py` |
 | Read-only raw tools | `backend/wingman_edge_agents/tools/vault_raw_tools.py` |
 | Wiki read/write tools | `backend/wingman_edge_agents/tools/vault_wiki_tools.py` |
 | Shared vault path + read/write primitives | `backend/wingman_edge_agents/tools/root_fs.py` |
@@ -198,3 +206,4 @@ Implement the following in order that makes sense for your releases; each item s
 |------|------|
 | 2026-04-11 | Initial spec: gist summary, repo mapping, ingest-complete milestone, backlog for wiki/query/lint/index/log/schema. |
 | 2026-04-11 | Wiki compile after ingest: `wiki/` tools, `NodeAgent.wiki_agent`, Obsidian wikilinks + tags in compile prompt; smoke asserts on wiki output. |
+| 2026-04-12 | Wiki query: `query_node`, `NodeAgent.query_agent` (read-only wiki tools), router updates `WikiState.query`; answer in `WikiState.generation`. |

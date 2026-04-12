@@ -12,6 +12,7 @@ from backend.wingman_edge_agents.agents.prompts.wiki_pompt import (
     QUERY_ROUTER_SYS_PROMPT,
     TOPIC_AGENT_SYS_PROMPT,
     WIKI_COMPILE_AGENT_SYS_PROMPT,
+    WIKI_QUERY_AGENT_SYS_PROMPT,
 )
 from backend.wingman_edge_agents.services.edge_llm_client.llm_client import LLMClient
 from backend.wingman_edge_agents.tools.vault_raw_tools import (
@@ -123,7 +124,14 @@ class NodeAgent:
             "WIKI_WIKI_AGENT_LLM",
             os.getenv("WIKI_INGEST_MODEL", "llama3.1:8b"),
         )
-        
+        self.query_agent_llm = os.getenv(
+            "WIKI_QUERY_AGENT_LLM",
+            os.getenv(
+                "WIKI_WIKI_AGENT_LLM",
+                os.getenv("WIKI_INGEST_MODEL", "llama3.1:8b"),
+            ),
+        )
+
     def topic_agent(self, excerpt: str, source_description: str) -> TopicPlacementDecision:
         """
         LangChain agent: inspect vault raw/ topics via tools, then structured placement.
@@ -252,6 +260,41 @@ class NodeAgent:
                     "transcript_tail": transcript[-8000:],
                 }
             )
+
+    def query_agent(self, user_question: str) -> str:
+        """Answer from ``wiki/`` via read-only tools; return markdown for ``WikiState.generation``."""
+        llm = self.llm_client.init_ollama(
+            model=self.query_agent_llm,
+            temperature=0,
+            reasoning=None,
+            num_ctx=80000,
+        )
+        tools = [
+            list_wiki_articles,
+            read_wiki_file,
+        ]
+        agent = create_agent(
+            model=llm,
+            system_prompt=WIKI_QUERY_AGENT_SYS_PROMPT,
+            tools=tools,
+            middleware=[
+                ToolRetryMiddleware(max_retries=2, backoff_factor=1.5, initial_delay=0.5),
+                ModelRetryMiddleware(max_retries=2),
+            ],
+        )
+        user_block = (
+            "Answer using only wiki files you read with tools.\n\n"
+            f"User question:\n---\n{user_question}\n---"
+        )
+        result = agent.invoke({"messages": [("user", user_block)]})
+        messages = result.get("messages", [])
+        if not messages:
+            return "The wiki query agent returned no messages."
+        final_ans = messages[-1].content
+        if isinstance(final_ans, list):
+            final_ans = " ".join(str(x) for x in final_ans)
+        text = str(final_ans).strip()
+        return text if text else "The wiki does not contain relevant information for this question."
 
 
 def topic_agent(
